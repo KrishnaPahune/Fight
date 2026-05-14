@@ -1,6 +1,40 @@
 
 import { useState, useEffect, useRef } from "react";
 
+// ─── SUPABASE CONFIG ───────────────────────────────────────────────────────────
+// Paste your Supabase project URL and anon key here
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const USER_ID = "krishna"; // unique identifier for your data
+
+const db = {
+  async get(key) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/training_store?user_id=eq.${USER_ID}&key=eq.${encodeURIComponent(key)}&select=value`, {
+        headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${SUPABASE_ANON_KEY}` }
+      });
+      const data = await res.json();
+      if (data && data[0]) return JSON.parse(data[0].value);
+      return null;
+    } catch { return null; }
+  },
+  async set(key, value) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/training_store`, {
+        method: "POST",
+        headers: {
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/json",
+          "Prefer": "resolution=merge-duplicates",
+        },
+        body: JSON.stringify({ user_id: USER_ID, key, value: JSON.stringify(value), updated_at: new Date().toISOString() })
+      });
+    } catch {}
+  }
+};
+// ──────────────────────────────────────────────────────────────────────────────
+
 const INITIAL_PROFILE = {
   name: "Krishna",
   goal: "Para SF / IMA",
@@ -201,24 +235,10 @@ export default function TrainingApp() {
   const today = new Date().toLocaleDateString("en-US", { weekday: "long" });
   const [activeTab, setActiveTab] = useState("today");
   const [selectedDay, setSelectedDay] = useState(today in INITIAL_PLAN ? today : "Monday");
-  const [plan, setPlan] = useState(() => {
-    try {
-      const saved = localStorage.getItem("krishna_plan");
-      return saved ? JSON.parse(saved) : INITIAL_PLAN;
-    } catch { return INITIAL_PLAN; }
-  });
-  const [profile, setProfile] = useState(() => {
-    try {
-      const saved = localStorage.getItem("krishna_profile");
-      return saved ? JSON.parse(saved) : INITIAL_PROFILE;
-    } catch { return INITIAL_PROFILE; }
-  });
-  const [logs, setLogs] = useState(() => {
-    try {
-      const saved = localStorage.getItem("krishna_logs");
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  const [plan, setPlan] = useState(INITIAL_PLAN);
+  const [profile, setProfile] = useState(INITIAL_PROFILE);
+  const [logs, setLogs] = useState([]);
+  const [cloudReady, setCloudReady] = useState(false);
   const [aiChat, setAiChat] = useState([]);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -228,15 +248,25 @@ export default function TrainingApp() {
   const [editingExercise, setEditingExercise] = useState(null);
   const chatEndRef = useRef(null);
 
+  // Sync to Supabase on change (debounced)
+  useEffect(() => { db.set("plan", plan); }, [plan]);
+  useEffect(() => { db.set("profile", profile); }, [profile]);
+  useEffect(() => { db.set("logs", logs); }, [logs]);
+
+  // Load from Supabase on mount
   useEffect(() => {
-    try { localStorage.setItem("krishna_plan", JSON.stringify(plan)); } catch {}
-  }, [plan]);
-  useEffect(() => {
-    try { localStorage.setItem("krishna_profile", JSON.stringify(profile)); } catch {}
-  }, [profile]);
-  useEffect(() => {
-    try { localStorage.setItem("krishna_logs", JSON.stringify(logs)); } catch {}
-  }, [logs]);
+    const load = async () => {
+      const [savedPlan, savedProfile, savedLogs] = await Promise.all([
+        db.get("plan"), db.get("profile"), db.get("logs")
+      ]);
+      if (savedPlan) setPlan(savedPlan);
+      if (savedProfile) setProfile(savedProfile);
+      if (savedLogs) setLogs(savedLogs);
+      setCloudReady(true);
+    };
+    if (SUPABASE_URL !== "YOUR_SUPABASE_URL") load();
+    else setCloudReady(true);
+  }, []);
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [aiChat]);
@@ -382,7 +412,15 @@ Replace "exercise+name" with the actual exercise. Always use + between words. Th
           color: "#cc7a3a",
           letterSpacing: "0.5px",
           fontStyle: "italic",
-        }}>"{quote}"</div>
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}>
+          <span>"{quote}"</span>
+          <span style={{ fontSize: "8px", letterSpacing: "1px", color: SUPABASE_URL !== "YOUR_SUPABASE_URL" ? (cloudReady ? "#3a8a3a" : "#666") : "#553a1a", marginLeft: "8px", flexShrink: 0 }}>
+            {SUPABASE_URL !== "YOUR_SUPABASE_URL" ? (cloudReady ? "☁ SYNCED" : "☁ SYNCING...") : "⚠ LOCAL"}
+          </span>
+        </div>
       </div>
 
       {/* Stats Bar */}
@@ -970,6 +1008,33 @@ Replace "exercise+name" with the actual exercise. Always use + between words. Th
               <div style={{ fontSize: "9px", color: "#aa3a3a", letterSpacing: "1px", marginBottom: "4px" }}>COMMON MISTAKE</div>
               <div style={{ fontSize: "11px", color: "#884a4a" }}>{EXERCISE_TIPS[selectedExercise]?.common_mistake}</div>
             </div>
+            <a
+              href={`https://www.youtube.com/results?search_query=${encodeURIComponent(selectedExercise + " proper form tutorial")}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                width: "100%",
+                padding: "11px",
+                background: "rgba(220,30,30,0.12)",
+                border: "1px solid rgba(220,30,30,0.35)",
+                borderRadius: "6px",
+                color: "#ff5555",
+                fontSize: "11px",
+                textDecoration: "none",
+                letterSpacing: "1px",
+                fontFamily: "'Courier New', monospace",
+                marginBottom: "8px",
+                cursor: "pointer",
+                boxSizing: "border-box",
+              }}>
+              <span style={{ fontSize: "15px" }}>▶</span>
+              <span>WATCH ON YOUTUBE</span>
+              <span style={{ fontSize: "9px", color: "#993333", marginLeft: "auto" }}>↗ OPEN</span>
+            </a>
             <button onClick={() => setSelectedExercise(null)} style={{
               width: "100%",
               padding: "12px",
